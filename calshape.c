@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <math.h>
+#include <stdlib.h>
 
-#define N 7
+#define N 3
+//#define TEST
 
 char buf[N+1][N+1] = {0};
 int step;
@@ -10,6 +12,7 @@ int step;
 int x_min,x_max, y_min,y_max;
 
 int num;
+int bufsize;	//the crtct_rec count
 /*
 * shape's characteristic struct
 * contains both variance an convariance
@@ -23,24 +26,24 @@ typedef struct chart {
 /*
 * struct 
 */
-typedef struct addr  {
+typedef struct point{
 	int x;
 	int y;
-}point;
+}POINT;
 
-static point record[64] = {0};
+static POINT record[64] = {0};
 CHARTC charater;
-static CHARTC crtc_rec[4096];
+CHARTC *crtc_rec;
 
 
 void do_print();
 int checklegal(int x, int y);
 void checksame();
 void putblock(int x_min, int y_min, int x_max, int y_max);
-void calchart(point *buf, int size);
+void calchart(POINT *buf, int size);
 float do_sqr(float x, float x_avr);
 inline float do_cr(float x, float x_avr, float y, float y_avr);
-CHARTC* get_chartc(point *buf, CHARTC *crt, int count);
+CHARTC* get_chartc(POINT *buf, CHARTC *crt, int count);
 int issame(CHARTC crt, CHARTC *rec);
 void add_crtc(CHARTC crt);
 
@@ -53,7 +56,7 @@ void putblock(int x_min, int y_min, int x_max, int y_max)
 
 	if(step == 0){
 		i = j = (N>>1) + N%2;
-		printf("(%d,%d)\n", i, j);
+		//printf("(%d,%d)\n", i, j);
 		buf[i][j] = 1;
 		record[step].x = i;
 		record[step].y = j;
@@ -85,8 +88,12 @@ void putblock(int x_min, int y_min, int x_max, int y_max)
 	}
 	else{
 		CHARTC temp;
-		//printf("%d\n", ++num);
-		//calchart(record, N);
+	#ifdef TEST
+		printf("%d\n", ++num);
+		calchart(record, N);
+		do_print();	
+		return;
+	#endif
 		get_chartc(record, &temp, N);
 		if(!issame(temp, crtc_rec)){
 			add_crtc(temp);
@@ -123,6 +130,13 @@ int issame(CHARTC crt, CHARTC *rec)
 void add_crtc(CHARTC crtc)
 {
 	num++;
+	if(num > bufsize - 1){
+		if((crtc_rec = (CHARTC *)realloc(crtc_rec, (sizeof(CHARTC)) * (bufsize + 4096))) == NULL){
+			printf("realloc err\n");
+			return;
+		}
+		bufsize += sizeof(CHARTC) * 4096;
+	}
 	crtc_rec[num].var_x = crtc.var_x;
 	crtc_rec[num].var_y = crtc.var_y;
 	crtc_rec[num].cov = crtc.cov;
@@ -163,7 +177,7 @@ void do_print()
 /*
 * caculate the shape characteristic
 */
-void calchart(point *buf, int size)
+void calchart(POINT *buf, int size)
 {
 	int i;
 	float x_total = 0.0, y_total = 0.0;
@@ -172,8 +186,8 @@ void calchart(point *buf, int size)
 	float cov = 0.0;
 	for(i = 0; i < size; i++){
 		//printf("(%d,%d)\n", buf[i].x, buf[i].y);
-		x_total += buf[i].x;
-		y_total += buf[i].y;		
+		x_total += buf[i].x * size;
+		y_total += buf[i].y * size;		
 	}
 	x_avr = x_total/size;
 	y_avr = y_total/size;
@@ -181,7 +195,7 @@ void calchart(point *buf, int size)
 	
 	for(i = 0; i < size; i++){
 		//printf("(%d, %d)\n", buf[i].x, buf[i].y);
-		cov += do_cr(buf[i].x, x_avr, buf[i].y, y_avr);
+		cov += do_cr(buf[i].x * size, x_avr, buf[i].y * size, y_avr);
 		//printf("point: (%d,%d) cov: %lf\n", buf[i].x, buf[i].y, cov);
 		
 	}
@@ -189,8 +203,8 @@ void calchart(point *buf, int size)
 
 	x_total = y_total = 0;
 	for(i = 0; i < size; i++){
-		x_total += do_sqr(buf[i].x, x_avr);
-		y_total += do_sqr(buf[i].y, y_avr);
+		x_total += do_sqr(buf[i].x * size, x_avr);
+		y_total += do_sqr(buf[i].y * size, y_avr);
 	}
 	x_avr = x_total/size;
 	y_avr = y_total/size;
@@ -211,9 +225,12 @@ inline float do_cr(float x, float x_avr, float y, float y_avr)
 }
 
 /*
-* 
+*计算放置点集的方差和协方差
+*由方差和协方差两个特征能唯一确定图形的摆放情况
+*上下左右翻转造成协方差正负对调
+*图形旋转一个90度造成X,Y坐标方差相互对调
 */
-CHARTC* get_chartc(point *buf, CHARTC *crt, int size)
+CHARTC* get_chartc(POINT *buf, CHARTC *crt, int size)
 {
 	int i;
 	float x_total = 0.0, y_total = 0.0;
@@ -223,7 +240,7 @@ CHARTC* get_chartc(point *buf, CHARTC *crt, int size)
 	for(i = 0; i < size; i++){
 		//printf("(%d,%d)\n", buf[i].x, buf[i].y);
 		x_total += buf[i].x * size;		//坐标点乘以size已使得到的方差和协方差为整数
-		y_total += buf[i].y * size;		
+		y_total += buf[i].y * size;		//防止结果为小数时因为精度截断导致相同的结果产生误差,下同	
 	}
 	x_avr= x_total/size;
 	y_avr = y_total/size;
@@ -260,6 +277,11 @@ float do_sqr(float x, float x_avr)
 int main()
 {
 	step = 0;
+	crtc_rec = (CHARTC *)malloc(sizeof(CHARTC)* 4096);
+	if(crtc_rec == NULL){
+		printf("malloc error\n");
+		return 0;
+	}
 	putblock(1,1,1,1);
 	printf("total match num:%d\n", num);
 	return 1;
